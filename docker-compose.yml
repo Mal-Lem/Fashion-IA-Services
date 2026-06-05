@@ -1,0 +1,48 @@
+﻿version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fap_postgres
+    environment:
+      POSTGRES_USER: fap_user
+      POSTGRES_PASSWORD: fap_password
+      POSTGRES_DB: fap_dev
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: fap_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: fap_mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  minio:
+    image: minio/minio:latest
+    container_name: fap_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: fap_minio_user
+      MINIO_ROOT_PASSWORD: fap_minio_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

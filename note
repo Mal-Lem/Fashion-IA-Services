@@ -1,0 +1,8 @@
+Les commandes pour relancer le projet
+# 1. Lancer Docker (Redis, MinIO, Mailpit)
+cd C:\Users\Administrateur\Downloads\fashion-ai-platform-starter\fashion-ai-platform
+docker compose up -d
+
+# 2. Lancer le serveur NestJS
+cd apps\api
+npm run dev
