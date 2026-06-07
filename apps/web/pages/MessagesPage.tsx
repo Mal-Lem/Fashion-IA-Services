@@ -4,8 +4,10 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { Header } from "@/components/shared/Header";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Search, ArrowLeft, Check, CheckCheck } from "lucide-react";
+import { Send, Search, ArrowLeft, Image, X, FileText, Wifi, WifiOff } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { getAccessToken } from "@/lib/api";
+import { io, Socket } from "socket.io-client";
 
 const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
   accepted: { bg: "#E8F5E9", text: "#2E7D32" },
@@ -16,29 +18,19 @@ const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  accepted: "Acceptee",
-  in_progress: "En cours",
-  refused: "Refusee",
-  pending: "En attente",
-  completed: "Terminee",
-  cancelled: "Annulee",
+  accepted: "Acceptee", in_progress: "En cours", refused: "Refusee",
+  pending: "En attente", completed: "Terminee", cancelled: "Annulee",
 };
 
 interface Message {
-  id: string;
-  senderId: string;
-  content: string;
-  messageType: string;
-  isSystem: boolean;
-  readAt: string | null;
-  createdAt: string;
-  sender?: { id: string; firstName: string; avatarUrl?: string };
+  id: string; senderId: string; content: string; messageType: string;
+  attachmentUrl?: string; isSystem: boolean; readAt: string | null;
+  createdAt: string; sender?: { id: string; firstName: string; avatarUrl?: string };
 }
 
 interface Conversation {
-  orderId: string;
-  status: string;
-  design?: { name: string; selectedImageUrl?: string; thumbnailUrl?: string };
+  orderId: string; status: string;
+  design?: { name: string; selectedImageUrl?: string };
   partner?: { id: string; firstName: string; lastName: string; avatarUrl?: string };
   lastMessage?: { content: string; createdAt: string; isSystem: boolean };
 }
@@ -53,84 +45,147 @@ export default function MessagesPage() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [showOrderCard, setShowOrderCard] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Load conversations
   useEffect(() => {
     const load = async () => {
       try {
-        const { messagesApi } = await import("@/lib/api");
-        const data = await messagesApi.getConversations();
-        setConversations(data || []);
-        if (data && data.length > 0) {
-          setActiveConv(data[0]);
+        const token = getAccessToken();
+        const res = await fetch("http://localhost:3001/v1/messages", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setConversations(data || []);
+          if (data && data.length > 0 && !activeConv) setActiveConv(data[0]);
         }
-      } catch {
-        setConversations([]);
-      } finally {
-        setLoading(false);
-      }
+      } catch {} finally { setLoading(false); }
     };
     load();
   }, []);
 
-  // Load messages when conversation changes
   useEffect(() => {
     if (!activeConv) return;
     const load = async () => {
       try {
-        const { messagesApi } = await import("@/lib/api");
-        const data = await messagesApi.getMessages(activeConv.orderId);
-        setMessages(data || []);
-      } catch {
-        setMessages([]);
-      }
+        const token = getAccessToken();
+        const res = await fetch(`http://localhost:3001/v1/messages/${activeConv.orderId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) setMessages(await res.json());
+      } catch {}
     };
     load();
   }, [activeConv]);
 
+  useEffect(() => {
+    if (!activeConv || !user) return;
+
+    const token = getAccessToken();
+    const socket = io("http://localhost:3001", {
+      auth: { token },
+      transports: ["websocket", "polling"],
+    });
+
+    socket.on("connect", () => {
+      setConnected(true);
+      socket.emit("join_conversation", { orderId: activeConv.orderId });
+    });
+
+    socket.on("connect_error", () => setConnected(false));
+    socket.on("disconnect", () => setConnected(false));
+
+    socket.on("new_message", (msg: Message) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.orderId === activeConv.orderId
+            ? { ...c, lastMessage: { content: msg.content, createdAt: msg.createdAt, isSystem: msg.isSystem } }
+            : c
+        )
+      );
+    });
+
+    return () => { socket.disconnect(); };
+  }, [activeConv, user]);
+
   const handleSelectConv = (conv: Conversation) => {
     setActiveConv(conv);
     setShowSidebar(false);
+    setShowOrderCard(true);
   };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputVal.trim() || !activeConv || sending) return;
-
+    if ((!inputVal.trim() && !imagePreview) || !activeConv || sending) return;
     setSending(true);
     const content = inputVal.trim();
     setInputVal("");
 
     try {
-      const { messagesApi } = await import("@/lib/api");
-      const newMsg = await messagesApi.sendMessage(activeConv.orderId, content);
-      setMessages((prev) => [...prev, newMsg]);
-    } catch {
-      setInputVal(content); // Restore on error
-    } finally {
-      setSending(false);
+      const token = getAccessToken();
+      const body: any = { content: content || "" };
+      if (imagePreview) body.attachmentUrl = imagePreview;
+
+      const res = await fetch(`http://localhost:3001/v1/messages/${activeConv.orderId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const newMsg = await res.json();
+        setMessages((prev) => [...prev, newMsg]);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.orderId === activeConv.orderId
+              ? { ...c, lastMessage: { content: newMsg.content, createdAt: newMsg.createdAt, isSystem: false } }
+              : c
+          )
+        );
+      }
+      setImagePreview(null);
+    } catch {} finally { setSending(false); }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const token = getAccessToken();
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("http://localhost:3001/v1/users/me/portfolio", {
+        method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setImagePreview(data.url as string);
+      }
+    } catch {} finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const filtered = conversations.filter(
-    (c) =>
-      !search ||
-      c.partner?.firstName?.toLowerCase().includes(search.toLowerCase()) ||
-      c.design?.name?.toLowerCase().includes(search.toLowerCase())
+    (c) => !search || c.partner?.firstName?.toLowerCase().includes(search.toLowerCase()) ||
+      c.design?.name?.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const formatTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleTimeString("fr-FR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
+  const formatTime = (dateStr: string) => new Date(dateStr).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     const today = new Date();
@@ -139,63 +194,34 @@ export default function MessagesPage() {
   };
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{ background: "#FAFAFA", fontFamily: "'Inter', system-ui, sans-serif" }}
-    >
+    <div className="min-h-screen flex flex-col" style={{ background: "#FAFAFA", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <Header />
-
-      <main
-        className="flex-1 pt-16 flex overflow-hidden"
-        style={{ height: "calc(100vh - 64px)" }}
-      >
+      <main className="flex-1 pt-16 flex overflow-hidden" style={{ height: "calc(100vh - 64px)" }}>
         <div className="w-full max-w-7xl mx-auto flex overflow-hidden rounded-none lg:rounded-2xl lg:my-4 lg:shadow-sm lg:border lg:border-gray-100 bg-white">
-          
-          {/* Sidebar conversations */}
-          <aside
-            className={`${showSidebar ? "flex" : "hidden"} lg:flex flex-col w-full lg:w-80 xl:w-96 flex-shrink-0 border-r border-gray-100`}
-            aria-label="Conversations"
-          >
+
+          <aside className={`${showSidebar ? "flex" : "hidden"} lg:flex flex-col w-full lg:w-80 xl:w-96 flex-shrink-0 border-r border-gray-100`}>
             <div className="p-4 border-b border-gray-100">
-              <h1
-                className="font-semibold text-[#212121] mb-3"
-                style={{ fontSize: "1.1rem" }}
-              >
-                Messages
-              </h1>
+              <div className="flex items-center justify-between mb-3">
+                <h1 className="font-semibold text-[#212121]" style={{ fontSize: "1.1rem" }}>Messages</h1>
+                <span title={connected ? "Connecté" : "Déconnecté"}>
+                  {connected ? <Wifi className="w-4 h-4" style={{ color: "#2E7D32" }} /> : <WifiOff className="w-4 h-4" style={{ color: "#C62828" }} />}
+                </span>
+              </div>
               <div className="relative">
-                <Search
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9E9E9E]"
-                  aria-hidden="true"
-                />
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Rechercher..."
-                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm text-[#212121] placeholder-[#9E9E9E] focus:outline-none focus:ring-2 focus:border-[#5E35B1] bg-[#FAFAFA]"
-                />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#9E9E9E]" />
+                <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher..."
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm text-[#212121] placeholder-[#9E9E9E] focus:outline-none focus:ring-2 focus:border-[#5E35B1] bg-[#FAFAFA]" />
               </div>
             </div>
-
             <div className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="p-4 space-y-3">
-                  {Array.from({ length: 4 }).map((_, i) => (
+                  {Array.from({ length: 3 }).map((_, i) => (
                     <div key={i} className="flex gap-3 p-2">
-                      <div
-                        className="w-12 h-12 rounded-full animate-pulse flex-shrink-0"
-                        style={{ background: "#EDE7FF" }}
-                      />
+                      <div className="w-12 h-12 rounded-full animate-pulse flex-shrink-0" style={{ background: "#EDE7FF" }} />
                       <div className="flex-1 space-y-2">
-                        <div
-                          className="h-3 rounded animate-pulse"
-                          style={{ background: "#EDE7FF", width: "60%" }}
-                        />
-                        <div
-                          className="h-3 rounded animate-pulse"
-                          style={{ background: "#EDE7FF", width: "80%" }}
-                        />
+                        <div className="h-3 rounded animate-pulse" style={{ background: "#EDE7FF", width: "60%" }} />
+                        <div className="h-3 rounded animate-pulse" style={{ background: "#EDE7FF", width: "80%" }} />
                       </div>
                     </div>
                   ))}
@@ -203,65 +229,28 @@ export default function MessagesPage() {
               ) : filtered.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full p-8 text-center">
                   <p className="text-[#9E9E9E] text-sm">Aucune conversation</p>
-                  <Link
-                    href="/couturieres"
-                    className="mt-3 text-sm font-medium"
-                    style={{ color: "#5E35B1" }}
-                  >
-                    Trouver une couturiere
-                  </Link>
+                  <Link href="/couturieres" className="mt-3 text-sm font-medium" style={{ color: "#5E35B1" }}>Trouver une couturiere</Link>
                 </div>
               ) : (
                 filtered.map((conv) => {
                   const isActive = activeConv?.orderId === conv.orderId;
-                  const statusStyle =
-                    STATUS_STYLES[conv.status] || STATUS_STYLES["pending"];
                   return (
-                    <button
-                      key={conv.orderId}
-                      onClick={() => handleSelectConv(conv)}
+                    <button key={conv.orderId} onClick={() => handleSelectConv(conv)}
                       className="w-full flex items-start gap-3 p-4 hover:bg-gray-50 transition-colors text-left border-b border-gray-50"
-                      style={{
-                        background: isActive ? "#F5F0FF" : undefined,
-                        borderLeft: isActive
-                          ? "3px solid #5E35B1"
-                          : "3px solid transparent",
-                      }}
-                    >
-                      <div
-                        className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm overflow-hidden"
-                        style={{ background: "#5E35B1" }}
-                      >
-                        {conv.partner?.avatarUrl ? (
-                          <img
-                            src={conv.partner.avatarUrl}
-                            alt={conv.partner.firstName}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          conv.partner?.firstName?.[0]?.toUpperCase() || "?"
-                        )}
+                      style={{ background: isActive ? "#F5F0FF" : undefined, borderLeft: isActive ? "3px solid #5E35B1" : "3px solid transparent" }}>
+                      <div className="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm overflow-hidden" style={{ background: "#5E35B1" }}>
+                        {conv.partner?.avatarUrl ? <img src={conv.partner.avatarUrl} alt="" className="w-full h-full object-cover" /> : conv.partner?.firstName?.[0]?.toUpperCase() || "?"}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-medium text-[#212121] text-sm truncate">
-                            {conv.partner?.firstName} {conv.partner?.lastName}
-                          </span>
-                          {conv.lastMessage && (
-                            <span className="text-xs text-[#9E9E9E] flex-shrink-0 ml-2">
-                              {formatDate(conv.lastMessage.createdAt)}
-                            </span>
-                          )}
+                          <span className="font-medium text-[#212121] text-sm truncate">{conv.partner?.firstName} {conv.partner?.lastName}</span>
+                          {conv.lastMessage && <span className="text-xs text-[#9E9E9E] flex-shrink-0 ml-2">{formatDate(conv.lastMessage.createdAt)}</span>}
                         </div>
-                        <p className="text-xs text-[#9E9E9E] truncate mb-1.5">
-                          {conv.lastMessage?.isSystem
-                            ? "Message systeme"
-                            : conv.lastMessage?.content || "Aucun message"}
+                        <p className="text-xs truncate mb-1.5" style={{ color: conv.lastMessage?.isSystem ? "#9E9E9E" : "#212121", fontWeight: conv.lastMessage?.isSystem ? 400 : 500 }}>
+                          {conv.lastMessage?.isSystem ? "Message systeme" : conv.lastMessage?.content || "Aucun message"}
                         </p>
-                        <span
-                          className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={{ background: statusStyle.bg, color: statusStyle.text }}
-                        >
+                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
+                          style={{ background: STATUS_STYLES[conv.status]?.bg || "#F5F5F5", color: STATUS_STYLES[conv.status]?.text || "#757575" }}>
                           {STATUS_LABELS[conv.status] || conv.status}
                         </span>
                       </div>
@@ -272,137 +261,83 @@ export default function MessagesPage() {
             </div>
           </aside>
 
-          {/* Conversation area */}
-          <div
-            className={`${!showSidebar ? "flex" : "hidden"} lg:flex flex-1 flex-col min-w-0`}
-          >
+          <div className={`${!showSidebar ? "flex" : "hidden"} lg:flex flex-1 flex-col min-w-0`}>
             {!activeConv ? (
               <div className="flex-1 flex items-center justify-center text-center p-8">
                 <div>
-                  <p className="text-[#9E9E9E] mb-2">
-                    Selectionnez une conversation
-                  </p>
-                  <Link
-                    href="/couturieres"
-                    className="text-sm font-medium"
-                    style={{ color: "#5E35B1" }}
-                  >
-                    Trouver une couturiere
-                  </Link>
+                  <p className="text-[#9E9E9E] mb-2">Selectionnez une conversation</p>
+                  <Link href="/couturieres" className="text-sm font-medium" style={{ color: "#5E35B1" }}>Trouver une couturiere</Link>
                 </div>
               </div>
             ) : (
               <>
-                {/* Conversation header */}
                 <div className="flex items-center gap-3 p-4 border-b border-gray-100">
-                  <button
-                    onClick={() => setShowSidebar(true)}
-                    className="lg:hidden p-2 rounded-full hover:bg-gray-100 transition-colors"
-                    aria-label="Retour aux conversations"
-                  >
+                  <button onClick={() => setShowSidebar(true)} className="lg:hidden p-2 rounded-full hover:bg-gray-100">
                     <ArrowLeft className="w-5 h-5 text-[#424242]" />
                   </button>
-                  <div
-                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm overflow-hidden"
-                    style={{ background: "#5E35B1" }}
-                  >
-                    {activeConv.partner?.avatarUrl ? (
-                      <img
-                        src={activeConv.partner.avatarUrl}
-                        alt={activeConv.partner.firstName}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      activeConv.partner?.firstName?.[0]?.toUpperCase() || "?"
-                    )}
+                  <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-sm overflow-hidden" style={{ background: "#5E35B1" }}>
+                    {activeConv.partner?.avatarUrl ? <img src={activeConv.partner.avatarUrl} alt="" className="w-full h-full object-cover" /> : activeConv.partner?.firstName?.[0]?.toUpperCase() || "?"}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-[#212121] text-sm">
-                      {activeConv.partner?.firstName}{" "}
-                      {activeConv.partner?.lastName}
-                    </p>
-                    <p className="text-xs text-[#9E9E9E] truncate">
-                      {activeConv.design?.name || "Design"}
-                    </p>
+                    <p className="font-semibold text-[#212121] text-sm">{activeConv.partner?.firstName} {activeConv.partner?.lastName}</p>
+                    <p className="text-xs text-[#9E9E9E] truncate">{activeConv.design?.name || "Commande"}</p>
                   </div>
-                  <span
-                    className="px-3 py-1 rounded-full text-xs font-medium flex-shrink-0"
-                    style={{
-                      background:
-                        STATUS_STYLES[activeConv.status]?.bg || "#F5F5F5",
-                      color:
-                        STATUS_STYLES[activeConv.status]?.text || "#757575",
-                    }}
-                  >
+                  <button onClick={() => setShowOrderCard(!showOrderCard)} className="p-2 rounded-lg hover:bg-gray-100" title="Details commande">
+                    <FileText className="w-4 h-4 text-[#757575]" />
+                  </button>
+                  <span className="px-3 py-1 rounded-full text-xs font-medium flex-shrink-0"
+                    style={{ background: STATUS_STYLES[activeConv.status]?.bg || "#F5F5F5", color: STATUS_STYLES[activeConv.status]?.text || "#757575" }}>
                     {STATUS_LABELS[activeConv.status] || activeConv.status}
                   </span>
                 </div>
 
-                {/* Messages */}
+                {showOrderCard && (
+                  <div className="mx-4 mt-3 p-4 rounded-xl border border-gray-100" style={{ background: "#FAFAFA" }}>
+                    <div className="flex items-center gap-3">
+                      {activeConv.design?.selectedImageUrl && (
+                        <img src={activeConv.design.selectedImageUrl} alt="" className="w-14 h-14 rounded-xl object-cover" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm text-[#212121]">{activeConv.design?.name || "Commande"}</p>
+                        <p className="text-xs text-[#757575] mt-0.5">Statut : {STATUS_LABELS[activeConv.status] || activeConv.status}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   <AnimatePresence>
                     {messages.map((msg) => {
                       const isOwn = msg.senderId === user?.id;
                       if (msg.isSystem) {
                         return (
-                          <div
-                            key={msg.id}
-                            className="flex justify-center"
-                          >
-                            <span className="px-4 py-1.5 rounded-full text-xs text-[#757575] bg-[#F5F5F5]">
-                              {msg.content}
-                            </span>
+                          <div key={msg.id} className="flex justify-center">
+                            <span className="px-4 py-1.5 rounded-full text-xs text-[#757575] bg-[#F5F5F5]">{msg.content}</span>
                           </div>
                         );
                       }
                       return (
-                        <motion.div
-                          key={msg.id}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className={`flex ${isOwn ? "justify-end" : "justify-start"} gap-2`}
-                        >
+                        <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                          className={`flex ${isOwn ? "justify-end" : "justify-start"} gap-2`}>
                           {!isOwn && (
-                            <div
-                              className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-white text-xs font-semibold self-end overflow-hidden"
-                              style={{ background: "#5E35B1" }}
-                            >
-                              {msg.sender?.avatarUrl ? (
-                                <img
-                                  src={msg.sender.avatarUrl}
-                                  alt={msg.sender.firstName}
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                msg.sender?.firstName?.[0]?.toUpperCase() || "?"
-                              )}
+                            <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-white text-xs font-semibold self-end overflow-hidden" style={{ background: "#5E35B1" }}>
+                              {msg.sender?.avatarUrl ? <img src={msg.sender.avatarUrl} alt="" className="w-full h-full object-cover" /> : msg.sender?.firstName?.[0]?.toUpperCase() || "?"}
                             </div>
                           )}
                           <div className="max-w-xs lg:max-w-md">
-                            <div
-                              className="px-4 py-2.5 rounded-2xl text-sm"
-                              style={{
-                                background: isOwn ? "#5E35B1" : "#F5F5F5",
-                                color: isOwn ? "white" : "#212121",
-                                borderBottomRightRadius: isOwn ? "4px" : "16px",
-                                borderBottomLeftRadius: isOwn ? "16px" : "4px",
-                              }}
-                            >
-                              {msg.content}
-                            </div>
-                            <div
-                              className={`flex items-center gap-1 mt-1 ${isOwn ? "justify-end" : "justify-start"}`}
-                            >
-                              <span className="text-xs text-[#9E9E9E]">
-                                {formatTime(msg.createdAt)}
-                              </span>
-                              {isOwn && (
-                                msg.readAt ? (
-                                  <CheckCheck className="w-3 h-3 text-[#5E35B1]" />
-                                ) : (
-                                  <Check className="w-3 h-3 text-[#9E9E9E]" />
-                                )
-                              )}
+                            {msg.messageType === "image" && msg.attachmentUrl && (
+                              <img src={msg.attachmentUrl} alt="" className="rounded-2xl mb-1 max-w-full cursor-pointer hover:opacity-90"
+                                style={{ maxHeight: "200px" }} onClick={() => window.open(msg.attachmentUrl, "_blank")} />
+                            )}
+                            {msg.content && (
+                              <div className="px-4 py-2.5 rounded-2xl text-sm"
+                                style={{ background: isOwn ? "#5E35B1" : "#F5F5F5", color: isOwn ? "white" : "#212121",
+                                  borderBottomRightRadius: isOwn ? "4px" : "16px", borderBottomLeftRadius: isOwn ? "16px" : "4px" }}>
+                                {msg.content}
+                              </div>
+                            )}
+                            <div className={`flex items-center gap-1 mt-1 ${isOwn ? "justify-end" : "justify-start"}`}>
+                              <span className="text-xs text-[#9E9E9E]">{formatTime(msg.createdAt)}</span>
                             </div>
                           </div>
                         </motion.div>
@@ -412,27 +347,28 @@ export default function MessagesPage() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input */}
-                <form
-                  onSubmit={handleSend}
-                  className="p-4 border-t border-gray-100"
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="text"
-                      value={inputVal}
-                      onChange={(e) => setInputVal(e.target.value)}
-                      placeholder="Ecrivez votre message..."
-                      className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm text-[#212121] placeholder-[#9E9E9E] focus:outline-none focus:ring-2 focus:border-[#5E35B1] bg-[#FAFAFA]"
-                      disabled={sending}
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputVal.trim() || sending}
-                      className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#5E35B1]"
-                      style={{ background: "#5E35B1" }}
-                      aria-label="Envoyer"
-                    >
+                <form onSubmit={handleSend} className="p-4 border-t border-gray-100">
+                  {imagePreview && (
+                    <div className="mb-3 relative inline-block">
+                      <img src={imagePreview} alt="" className="h-20 rounded-xl" />
+                      <button type="button" onClick={() => setImagePreview(null)}
+                        className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*" className="hidden" />
+                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-[#757575] hover:bg-gray-100 transition-colors disabled:opacity-50">
+                      <Image className="w-5 h-5" />
+                    </button>
+                    <input type="text" value={inputVal} onChange={(e) => setInputVal(e.target.value)}
+                      placeholder="Ecrivez votre message..." disabled={sending}
+                      className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm text-[#212121] placeholder-[#9E9E9E] focus:outline-none focus:ring-2 focus:border-[#5E35B1] bg-[#FAFAFA]" />
+                    <button type="submit" disabled={(!inputVal.trim() && !imagePreview) || sending}
+                      className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all disabled:opacity-50 hover:opacity-90"
+                      style={{ background: "#5E35B1" }} aria-label="Envoyer">
                       <Send className="w-4 h-4" />
                     </button>
                   </div>

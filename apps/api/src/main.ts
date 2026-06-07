@@ -4,13 +4,13 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import helmet from 'helmet';
 import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 
-// ── Crash handlers (empêche le process de mourir sans log) ──
 const crashLogger = new Logger('Process');
 
 process.on('uncaughtException', (error: Error) => {
@@ -28,6 +28,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });
+
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 3001);

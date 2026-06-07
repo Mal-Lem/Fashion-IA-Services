@@ -10,7 +10,6 @@ import { MessagesService } from './messages.service';
 
 @WebSocketGateway({
   cors: { origin: '*' },
-  namespace: '/messages',
 })
 export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

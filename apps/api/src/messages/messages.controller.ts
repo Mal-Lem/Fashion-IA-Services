@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Param, Query, UseGuards, Req } from '@nest
 import { Request } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
+import { MessagesGateway } from './messages.gateway';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('messages')
@@ -9,7 +10,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('messages')
 export class MessagesController {
-  constructor(private messagesService: MessagesService) {}
+  constructor(
+    private messagesService: MessagesService,
+    private messagesGateway: MessagesGateway,
+  ) {}
 
   @ApiOperation({ summary: 'Mes conversations' })
   @Get()
@@ -34,6 +38,8 @@ export class MessagesController {
     @Req() req: Request,
     @Body() body: { content: string; attachmentUrl?: string },
   ) {
-    return this.messagesService.sendMessage(orderId, req.user['id'], body.content, body.attachmentUrl);
+    const message = await this.messagesService.sendMessage(orderId, req.user['id'], body.content, body.attachmentUrl);
+    this.messagesGateway.broadcastToConversation(orderId, 'new_message', message);
+    return message;
   }
 }
