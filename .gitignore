@@ -47,5 +47,18 @@ prisma/dev.db-journal
 # Docker volumes (si locaux)
 docker/volumes/
 
+# Debug / test scripts (locaux uniquement)
+test-db*.js
+test-pg.js
+test-super.js
+check-users.js
+setup-db.js
+fix-perms.js
+note
+
+# Garbage files
+\{
+console.error*
+
 # TypeScript
 *.tsbuildinfo
