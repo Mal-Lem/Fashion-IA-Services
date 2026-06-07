@@ -5,7 +5,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 let accessToken: string | null = null;
 let onAuthError: (() => void) | null = null;
 
-// Permettre aux composants de s'abonner à la déconnexion forcée (401)
 export function setOnAuthError(cb: (() => void) | null) {
   onAuthError = cb;
 }
@@ -24,7 +23,6 @@ export function getAccessToken(): string | null {
   return null;
 }
 
-// Messages d'erreur en français
 function translateError(message: string): string {
   const translations: Record<string, string> = {
     "Email already exists": "Cet email est déjà utilisé",
@@ -62,25 +60,27 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     throw new Error("Impossible de contacter le serveur. Vérifiez votre connexion.");
   }
 
-  // 401 — Token expiré ou invalide
   if (res.status === 401) {
-    // Ne pas tenter de refresh sur les endpoints d'auth (évite les boucles)
     const isAuthEndpoint = endpoint.startsWith("/auth/");
-    if (!isAuthEndpoint) {
-      try {
-        const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (refreshRes.ok) {
-          const data = await refreshRes.json();
-          setAccessToken(data.access_token);
-          return request<T>(endpoint, options);
-        }
-      } catch {}
+
+    if (isAuthEndpoint) {
+      let message = "Email ou mot de passe incorrect";
+      try { const error = await res.json(); message = error.message?.error || error.message || message; } catch {}
+      throw new Error(translateError(message));
     }
 
-    // Refresh échoué → déconnexion
+    try {
+      const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (refreshRes.ok) {
+        const data = await refreshRes.json();
+        setAccessToken(data.access_token);
+        return request<T>(endpoint, options);
+      }
+    } catch {}
+
     setAccessToken(null);
     if (onAuthError) onAuthError();
     throw new Error("Session expirée, veuillez vous reconnecter");
