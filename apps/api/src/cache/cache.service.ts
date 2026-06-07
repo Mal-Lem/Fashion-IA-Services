@@ -28,7 +28,8 @@ export class CacheService implements OnModuleInit {
       const value = await this.client.get(key);
       if (!value) return null;
       return JSON.parse(value) as T;
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Cache get failed for key ${key}: ${err.message}`);
       return null;
     }
   }
@@ -46,7 +47,9 @@ export class CacheService implements OnModuleInit {
   async del(key: string): Promise<void> {
     try {
       await this.client.del(key);
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Cache del failed for key ${key}: ${err.message}`);
+    }
   }
 
   // Supprimer toutes les clés qui matchent un pattern
@@ -57,7 +60,9 @@ export class CacheService implements OnModuleInit {
         await this.client.del(...keys);
         this.logger.debug(`Cache invalidé : ${keys.length} clés supprimées (${pattern})`);
       }
-    } catch {}
+    } catch (err) {
+      this.logger.warn(`Cache delPattern failed for ${pattern}: ${err.message}`);
+    }
   }
 
   // Helper : get ou set (cache-aside pattern)

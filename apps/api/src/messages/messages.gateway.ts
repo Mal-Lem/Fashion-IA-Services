@@ -37,7 +37,8 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       const payload = this.jwtService.verify(token);
       this.connectedUsers.set(client.id, payload.sub);
       this.logger.log(`Client connecte : ${client.id} (user: ${payload.sub})`);
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Tentative connexion WebSocket échouée — token invalide (IP: ${client.handshake.address})`);
       client.disconnect();
     }
   }
@@ -58,8 +59,9 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       client.join(`order_${data.orderId}`);
       client.emit('joined', { orderId: data.orderId });
       this.logger.log(`User ${userId} a rejoint la conversation ${data.orderId}`);
-    } catch {
-      client.emit('error', { message: 'Acces refuse' });
+    } catch (err) {
+      this.logger.warn(`Accès refusé conversation ${data.orderId} pour user ${userId}`);
+      client.emit('error', { message: 'Accès refusé' });
     }
   }
 
@@ -85,6 +87,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
       this.logger.log(`Message envoye dans ${data.orderId} par ${userId}`);
     } catch (error) {
+      this.logger.error(`Échec envoi message dans ${data.orderId} par ${userId}: ${error.message}`);
       client.emit('error', { message: error.message });
     }
   }

@@ -1,7 +1,7 @@
 import { setDefaultResultOrder } from 'dns';
 setDefaultResultOrder('ipv4first');
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -9,6 +9,20 @@ import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
+
+// ── Crash handlers (empêche le process de mourir sans log) ──
+const crashLogger = new Logger('Process');
+
+process.on('uncaughtException', (error: Error) => {
+  crashLogger.error(`[uncaughtException] ${error.message}`, error.stack);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : undefined;
+  crashLogger.error(`[unhandledRejection] ${message}`, stack);
+});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -38,7 +52,7 @@ async function bootstrap() {
 
   // ── CORS ─────────────────────────────────────
   app.enableCors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3002', 'http://127.0.0.1:3002'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],

@@ -1,9 +1,10 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { authApi, setAccessToken, getAccessToken } from "@/lib/api";
+import { authApi, setAccessToken, getAccessToken, setOnAuthError } from "@/lib/api";
 
 export type UserRole = "user" | "couturiere" | "admin";
+type RegisterRole = UserRole | "client";
 
 export interface User {
   id: string;
@@ -40,7 +41,7 @@ interface RegisterData {
   lastName?: string;
   email: string;
   password: string;
-  role: UserRole;
+  role: RegisterRole;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -70,6 +71,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Gestionnaire global 401 → déconnexion automatique
+    setOnAuthError(() => {
+      setUser(null);
+      setAccessToken(null);
+    });
+
     const token = getAccessToken();
     if (token) {
       authApi.me()
