@@ -87,22 +87,34 @@ export default function MessagesPage() {
     load();
   }, [activeConv]);
 
-  useEffect(() => {
-    if (!activeConv || !user) return;
+  const socketRef = useRef<Socket | null>(null);
 
+  useEffect(() => {
+    if (!user) return;
     const token = getAccessToken();
+    console.log("[WS] Connecting...");
     const socket = io("http://localhost:3001", {
       auth: { token },
-      transports: ["websocket", "polling"],
+      transports: ["polling"],
     });
 
     socket.on("connect", () => {
+      console.log("[WS] Connected:", socket.id);
       setConnected(true);
-      socket.emit("join_conversation", { orderId: activeConv.orderId });
+      if (activeConv) {
+        console.log("[WS] Joining room:", activeConv.orderId);
+        socket.emit("join_conversation", { orderId: activeConv.orderId });
+      }
     });
-
-    socket.on("connect_error", () => setConnected(false));
-    socket.on("disconnect", () => setConnected(false));
+    socket.on("connect_error", (err) => {
+      console.error("[WS] Error:", err.message);
+    });
+    socket.on("disconnect", (reason) => {
+      console.log("[WS] Disconnected:", reason);
+      if (reason === "io server disconnect" || reason === "transport close") {
+        setConnected(false);
+      }
+    });
 
     socket.on("new_message", (msg: Message) => {
       setMessages((prev) => {
@@ -111,20 +123,25 @@ export default function MessagesPage() {
       });
       setConversations((prev) =>
         prev.map((c) =>
-          c.orderId === activeConv.orderId
+          c.orderId === activeConv?.orderId
             ? { ...c, lastMessage: { content: msg.content, createdAt: msg.createdAt, isSystem: msg.isSystem } }
             : c
         )
       );
     });
 
+    socketRef.current = socket;
     return () => { socket.disconnect(); };
-  }, [activeConv, user]);
+  }, [user]);
+
 
   const handleSelectConv = (conv: Conversation) => {
     setActiveConv(conv);
     setShowSidebar(false);
     setShowOrderCard(true);
+    if (socketRef.current?.connected) {
+      socketRef.current.emit("join_conversation", { orderId: conv.orderId });
+    }
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -203,8 +220,8 @@ export default function MessagesPage() {
             <div className="p-4 border-b border-gray-100">
               <div className="flex items-center justify-between mb-3">
                 <h1 className="font-semibold text-[#212121]" style={{ fontSize: "1.1rem" }}>Messages</h1>
-                <span title={connected ? "Connecté" : "Déconnecté"}>
-                  {connected ? <Wifi className="w-4 h-4" style={{ color: "#2E7D32" }} /> : <WifiOff className="w-4 h-4" style={{ color: "#C62828" }} />}
+                <span title={connected ? "WS connecté" : "WS déconnecté"}>
+                  <div className="w-3 h-3 rounded-full" style={{ background: connected ? "#2E7D32" : "#C62828" }} />
                 </span>
               </div>
               <div className="relative">

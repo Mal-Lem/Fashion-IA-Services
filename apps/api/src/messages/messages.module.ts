@@ -1,13 +1,17 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
 import { MessagesGateway } from './messages.gateway';
 
 @Module({
   imports: [
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret-change-in-production-use-rsa-in-prod',
+    JwtModule.registerAsync({
+      useFactory: (config: ConfigService) => ({
+        secret: config.get('JWT_SECRET', 'dev-secret-change-in-production'),
+      }),
+      inject: [ConfigService],
     }),
   ],
   controllers: [MessagesController],
