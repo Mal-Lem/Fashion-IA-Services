@@ -1,30 +1,33 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
+  private readonly logger = new Logger(HealthController.name);
+
   constructor(private prisma: PrismaService) {}
+
   @ApiOperation({ summary: 'Status de l\'API et des services' })
   @ApiResponse({ status: 200, description: 'API opérationnelle' })
   @Get()
   async check() {
     const start = Date.now();
 
-    // Vérifier PostgreSQL
     let dbStatus = 'ok';
-    let dbLatency = 0;
+    let dbLatency: number | null = null;
     try {
       const dbStart = Date.now();
       await this.prisma.$queryRaw`SELECT 1`;
       dbLatency = Date.now() - dbStart;
-    } catch {
+    } catch (err) {
       dbStatus = 'error';
+      this.logger.warn(`Health check DB échoué: ${err.message}`);
     }
 
     return {
-      status: 'ok',
+      status: dbStatus === 'ok' ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
       version: process.env.npm_package_version || '1.0.0',

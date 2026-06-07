@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Body, UseGuards, Req, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Body, UseGuards, Req, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
@@ -100,13 +100,15 @@ async addPortfolioPhoto(@Req() req: Request, @UploadedFile() file: Express.Multe
 
   // Ajouter l'URL au profil couturière
   const profile = await this.prisma.couturiereProfile.findUnique({ where: { userId } });
-  if (profile) {
-    const photos = [...(profile.portfolioPhotos as string[]), url];
-    await this.prisma.couturiereProfile.update({
-      where: { userId },
-      data: { portfolioPhotos: photos },
-    });
+  if (!profile) {
+    throw new BadRequestException('Créez d\'abord votre profil couturière avant d\'ajouter des photos');
   }
+
+  const photos = [...(profile.portfolioPhotos as string[]), url];
+  await this.prisma.couturiereProfile.update({
+    where: { userId },
+    data: { portfolioPhotos: photos },
+  });
 
   return { url, message: 'Photo ajoutée au portfolio' };
 }
