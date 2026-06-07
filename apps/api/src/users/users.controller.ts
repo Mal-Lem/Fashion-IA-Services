@@ -5,6 +5,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagg
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { UsersService } from './users.service';
 
 @ApiTags('users')
 @ApiBearerAuth('JWT')
@@ -14,6 +15,7 @@ export class UsersController {
   constructor(
     private prisma: PrismaService,
     private storage: StorageService,
+    private usersService: UsersService,
   ) {}
 
   @ApiOperation({ summary: 'Mon profil complet' })
@@ -47,12 +49,7 @@ export class UsersController {
   }))
   async updateAvatar(@Req() req: Request, @UploadedFile() file: Express.Multer.File) {
     const userId = req.user['id'];
-    const base64 = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-    const url = await this.storage.uploadImage(base64, 'portfolios', `avatars/${userId}.jpg`);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { avatarUrl: url },
-    });
+    const url = await this.usersService.updateAvatar(userId, file);
     return { avatarUrl: url, message: 'Photo de profil mise a jour' };
   }
 
