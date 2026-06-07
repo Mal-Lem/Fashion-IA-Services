@@ -196,10 +196,11 @@ model Design {
 
 model Order {
   id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  designId              String       @map("design_id") @db.Uuid
+  designId              String?      @map("design_id") @db.Uuid
   clientId              String       @map("client_id") @db.Uuid
   couturiereId          String       @map("couturiere_id") @db.Uuid
   status                OrderStatus  @default(pending)
+  description           String?      @map("description")
   clientMessage         String?      @map("client_message")
   couturiereMessage     String?      @map("couturiere_message")
   refusalReason         String?      @map("refusal_reason") @db.VarChar(200)
@@ -213,7 +214,7 @@ model Order {
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
-  design     Design            @relation(fields: [designId], references: [id])
+  design     Design?           @relation(fields: [designId], references: [id])
   client     User              @relation("ClientOrders", fields: [clientId], references: [id])
   couturiere CouturiereProfile @relation("CouturiereOrders", fields: [couturiereId], references: [id])
   messages   Message[]

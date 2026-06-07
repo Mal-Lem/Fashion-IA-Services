@@ -8,7 +8,7 @@ import { Footer } from "@/components/shared/Footer";
 import { motion } from "framer-motion";
 import {
   Star, MapPin, Clock, Euro, Scissors, Award, MessageCircle,
-  ChevronLeft, Eye, Heart, Share2, Check
+  ChevronLeft, Eye, Heart, Share2, Check, Send, X
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -31,6 +31,10 @@ export default function CouturierePublicPage({ id }: Props) {
   const [loading, setLoading] = useState(true);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [liked, setLiked] = useState(false);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [orderDescription, setOrderDescription] = useState("");
+  const [orderMessage, setOrderMessage] = useState("");
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
 
   useEffect(() => {
     if (id) loadProfile();
@@ -57,13 +61,44 @@ export default function CouturierePublicPage({ id }: Props) {
     }
   };
 
-  const handleContact = () => {
+  const handleOrderClick = () => {
     if (!isAuthenticated) {
-      toast.error("Connectez-vous pour contacter cette couturière");
+      toast.error("Connectez-vous pour commander");
       router.push("/login");
       return;
     }
-    router.push("/messages");
+    setShowOrderModal(true);
+  };
+
+  const handleOrderSubmit = async () => {
+    if (!orderDescription.trim()) {
+      toast.error("Décrivez votre projet");
+      return;
+    }
+    setOrderSubmitting(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await fetch("http://localhost:3001/v1/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          couturiereId: id,
+          description: orderDescription,
+          clientMessage: orderMessage || undefined,
+        }),
+      });
+      if (res.ok) {
+        toast.success("Commande envoyée !");
+        router.push("/messages");
+      } else {
+        const err = await res.json();
+        toast.error(err.message?.message || "Erreur lors de la commande");
+      }
+    } catch {
+      toast.error("Impossible de contacter le serveur");
+    } finally {
+      setOrderSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -162,11 +197,11 @@ export default function CouturierePublicPage({ id }: Props) {
                 )}
 
                 <div className="space-y-3">
-                  <button onClick={handleContact}
+                  <button onClick={handleOrderClick}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-white transition-all"
                     style={{ background: "linear-gradient(135deg, #5E35B1, #EC407A)" }}>
-                    <MessageCircle className="w-4 h-4" />
-                    Contacter
+                    <Send className="w-4 h-4" />
+                    Commander
                   </button>
                   <div className="flex gap-2">
                     <button onClick={() => setLiked(!liked)}
@@ -308,15 +343,46 @@ export default function CouturierePublicPage({ id }: Props) {
                   Ce profil vous intéresse ?
                 </h3>
                 <p className="text-sm text-[#616161] mb-4">
-                  Contactez {profile.user?.firstName} pour discuter de votre projet sur-mesure.
+                  Décrivez votre projet à {profile.user?.firstName}, elle vous répondra rapidement.
                 </p>
-                <button onClick={handleContact}
+                <button onClick={handleOrderClick}
                   className="inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-white"
                   style={{ background: "linear-gradient(135deg, #5E35B1, #EC407A)" }}>
-                  <MessageCircle className="w-4 h-4" />
-                  Envoyer un message
+                  <Send className="w-4 h-4" />
+                  Commander
                 </button>
               </motion.div>
+
+              {showOrderModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.6)" }} onClick={() => setShowOrderModal(false)}>
+                  <div className="bg-white rounded-2xl p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold text-lg">Commander chez {profile.user?.firstName}</h3>
+                      <button onClick={() => setShowOrderModal(false)}><X className="w-5 h-5" /></button>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Décrivez votre projet *</label>
+                        <textarea value={orderDescription} onChange={e => setOrderDescription(e.target.value)}
+                          rows={4} placeholder="Ex: Une robe de soirée bleue pour un mariage en juillet, budget ~200€"
+                          className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#5E35B1] resize-none" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Message (optionnel)</label>
+                        <textarea value={orderMessage} onChange={e => setOrderMessage(e.target.value)}
+                          rows={2} placeholder="Précisions supplémentaires..."
+                          className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#5E35B1] resize-none" />
+                      </div>
+                      <button onClick={handleOrderSubmit} disabled={orderSubmitting}
+                        className="w-full py-3 rounded-xl font-semibold text-white flex items-center justify-center gap-2"
+                        style={{ background: "linear-gradient(135deg, #5E35B1, #EC407A)" }}>
+                        {orderSubmitting ? "Envoi..." : <><Send className="w-4 h-4" /> Envoyer la commande</>}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </div>

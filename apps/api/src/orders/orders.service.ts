@@ -13,12 +13,18 @@ export class OrdersService {
   ) {}
 
   async create(clientId: string, dto: CreateOrderDto) {
-    // Vérifier que le design appartient au client
-    const design = await this.prisma.design.findUnique({ where: { id: dto.designId } });
-    if (!design) throw new NotFoundException('Design non trouve');
-    if (design.userId !== clientId) throw new ForbiddenException('Ce design ne vous appartient pas');
+    if (!dto.designId && !dto.description) {
+      throw new BadRequestException('Fournissez un design ou une description');
+    }
 
-    // Vérifier que la couturière existe
+    let designName = 'Commande';
+    if (dto.designId) {
+      const design = await this.prisma.design.findUnique({ where: { id: dto.designId } });
+      if (!design) throw new NotFoundException('Design non trouve');
+      if (design.userId !== clientId) throw new ForbiddenException('Ce design ne vous appartient pas');
+      designName = design.name;
+    }
+
     const couturiere = await this.prisma.couturiereProfile.findUnique({
       where: { id: dto.couturiereId },
       include: { user: { select: { id: true, firstName: true, email: true } } },
@@ -28,12 +34,12 @@ export class OrdersService {
       throw new BadRequestException('Cette couturiere nest pas disponible actuellement');
     }
 
-    // Créer la commande
     const order = await this.prisma.order.create({
       data: {
-        designId: dto.designId,
+        designId: dto.designId || null,
         clientId,
         couturiereId: dto.couturiereId,
+        description: dto.description,
         clientMessage: dto.clientMessage,
         status: 'pending',
       },
@@ -43,18 +49,20 @@ export class OrdersService {
       },
     });
 
-    // Créer le premier message système dans la conversation
+    const messageContent = dto.description
+      ? `Nouvelle demande : ${dto.description}`
+      : `Nouvelle demande de realisation avec le design "${designName}"`;
+
     await this.prisma.message.create({
       data: {
         orderId: order.id,
         senderId: clientId,
         messageType: 'system',
         isSystem: true,
-        content: `Nouvelle demande de realisation envoyee avec le design "${design.name}"`,
+        content: messageContent,
       },
     });
 
-    // Émettre l'événement
     await this.eventsService.emit('order_requested', clientId, {
       order_id: order.id,
       design_id: dto.designId,

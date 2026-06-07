@@ -1,11 +1,16 @@
 import { IsString, IsOptional, IsUUID, IsEnum, IsNumber } from 'class-validator';
 
 export class CreateOrderDto {
+  @IsOptional()
   @IsUUID()
-  designId: string;
+  designId?: string;
 
   @IsUUID()
   couturiereId: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @IsOptional()
   @IsString()
