@@ -1,2 +1,2 @@
-import CouturiereProfilePage from "@/pages/CouturiereProfilePage";
-export default CouturiereProfilePage;
+import EspaceProPage from "@/pages/EspaceProPage";
+export default EspaceProPage;
