@@ -232,7 +232,7 @@ model Message {
   senderId      String      @map("sender_id") @db.Uuid
   messageType   MessageType @default(text) @map("message_type")
   content       String?
-  attachmentUrl String?     @map("attachment_url")
+  attachmentUrls String[]   @map("attachment_urls")
   isSystem      Boolean     @default(false) @map("is_system")
   readAt        DateTime?   @map("read_at") @db.Timestamptz
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
