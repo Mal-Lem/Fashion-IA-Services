@@ -82,16 +82,16 @@ export class MessagesService {
   }
 
   // Envoyer un message
-  async sendMessage(orderId: string, senderId: string, content: string, attachmentUrl?: string) {
+  async sendMessage(orderId: string, senderId: string, content: string, attachmentUrls?: string[]) {
     await this.checkAccess(orderId, senderId);
 
     const message = await this.prisma.message.create({
       data: {
         orderId,
         senderId,
-        messageType: attachmentUrl ? 'image' : 'text',
+        messageType: attachmentUrls?.length ? 'image' : 'text',
         content,
-        attachmentUrl,
+        attachmentUrls: attachmentUrls || [],
       },
       include: {
         sender: { select: { id: true, firstName: true, avatarUrl: true } },

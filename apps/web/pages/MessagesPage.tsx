@@ -24,7 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface Message {
   id: string; senderId: string; content: string; messageType: string;
-  attachmentUrl?: string; isSystem: boolean; readAt: string | null;
+  attachmentUrls?: string[]; isSystem: boolean; readAt: string | null;
   createdAt: string; sender?: { id: string; firstName: string; avatarUrl?: string };
 }
 
@@ -47,7 +47,7 @@ export default function MessagesPage() {
   const [sending, setSending] = useState(false);
   const [showOrderCard, setShowOrderCard] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +88,11 @@ export default function MessagesPage() {
   }, [activeConv]);
 
   const socketRef = useRef<Socket | null>(null);
+  const activeConvRef = useRef<Conversation | null>(null);
+
+  useEffect(() => {
+    activeConvRef.current = activeConv;
+  }, [activeConv]);
 
   useEffect(() => {
     if (!user) return;
@@ -101,9 +106,9 @@ export default function MessagesPage() {
     socket.on("connect", () => {
       console.log("[WS] Connected:", socket.id);
       setConnected(true);
-      if (activeConv) {
-        console.log("[WS] Joining room:", activeConv.orderId);
-        socket.emit("join_conversation", { orderId: activeConv.orderId });
+      if (activeConvRef.current) {
+        console.log("[WS] Joining room:", activeConvRef.current.orderId);
+        socket.emit("join_conversation", { orderId: activeConvRef.current.orderId });
       }
     });
     socket.on("connect_error", (err) => {
@@ -117,17 +122,21 @@ export default function MessagesPage() {
     });
 
     socket.on("new_message", (msg: Message) => {
+      const currentConv = activeConvRef.current;
+      console.log("[WS] new_message:", msg.content?.substring(0, 30), "conv:", currentConv?.orderId);
       setMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.orderId === activeConv?.orderId
-            ? { ...c, lastMessage: { content: msg.content, createdAt: msg.createdAt, isSystem: msg.isSystem } }
-            : c
-        )
-      );
+      if (currentConv && msg.orderId === currentConv.orderId) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.orderId === currentConv.orderId
+              ? { ...c, lastMessage: { content: msg.content, createdAt: msg.createdAt, isSystem: msg.isSystem } }
+              : c
+          )
+        );
+      }
     });
 
     socketRef.current = socket;
@@ -146,7 +155,7 @@ export default function MessagesPage() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!inputVal.trim() && !imagePreview) || !activeConv || sending) return;
+    if ((!inputVal.trim() && imagePreviews.length === 0) || !activeConv || sending) return;
     setSending(true);
     const content = inputVal.trim();
     setInputVal("");
@@ -154,25 +163,18 @@ export default function MessagesPage() {
     try {
       const token = getAccessToken();
       const body: any = { content: content || "" };
-      if (imagePreview) body.attachmentUrl = imagePreview;
+      if (imagePreviews.length > 0) body.attachmentUrls = imagePreviews;
 
       const res = await fetch(`http://localhost:3001/v1/messages/${activeConv.orderId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
-      if (res.ok) {
-        const newMsg = await res.json();
-        setMessages((prev) => [...prev, newMsg]);
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.orderId === activeConv.orderId
-              ? { ...c, lastMessage: { content: newMsg.content, createdAt: newMsg.createdAt, isSystem: false } }
-              : c
-          )
-        );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error("Send failed:", err);
       }
-      setImagePreview(null);
+      setImagePreviews([]);
     } catch {} finally { setSending(false); }
   };
 
@@ -184,12 +186,12 @@ export default function MessagesPage() {
       const token = getAccessToken();
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("http://localhost:3001/v1/users/me/portfolio", {
+      const res = await fetch("http://localhost:3001/v1/messages/upload", {
         method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData,
       });
       if (res.ok) {
         const data = await res.json();
-        setImagePreview(data.url as string);
+        setImagePreviews((prev) => [...prev, data.url as string]);
       }
     } catch {} finally {
       setUploading(false);
@@ -342,9 +344,14 @@ export default function MessagesPage() {
                             </div>
                           )}
                           <div className="max-w-xs lg:max-w-md">
-                            {msg.messageType === "image" && msg.attachmentUrl && (
-                              <img src={msg.attachmentUrl} alt="" className="rounded-2xl mb-1 max-w-full cursor-pointer hover:opacity-90"
-                                style={{ maxHeight: "200px" }} onClick={() => window.open(msg.attachmentUrl, "_blank")} />
+                            {msg.messageType === "image" && msg.attachmentUrls?.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-1">
+                                {msg.attachmentUrls.map((url: string, i: number) => (
+                                  <img key={i} src={url} alt="" className="rounded-2xl cursor-pointer hover:opacity-90"
+                                    style={{ maxHeight: "150px", maxWidth: "200px" }}
+                                    onClick={() => window.open(url, "_blank")} />
+                                ))}
+                              </div>
                             )}
                             {msg.content && (
                               <div className="px-4 py-2.5 rounded-2xl text-sm"
@@ -365,13 +372,17 @@ export default function MessagesPage() {
                 </div>
 
                 <form onSubmit={handleSend} className="p-4 border-t border-gray-100">
-                  {imagePreview && (
-                    <div className="mb-3 relative inline-block">
-                      <img src={imagePreview} alt="" className="h-20 rounded-xl" />
-                      <button type="button" onClick={() => setImagePreview(null)}
-                        className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center">
-                        <X className="w-3 h-3" />
-                      </button>
+                  {imagePreviews.length > 0 && (
+                    <div className="mb-3 flex gap-2 flex-wrap">
+                      {imagePreviews.map((url, i) => (
+                        <div key={i} className="relative inline-block">
+                          <img src={url} alt="" className="h-16 rounded-lg" />
+                          <button type="button" onClick={() => setImagePreviews((prev) => prev.filter((_, j) => j !== i))}
+                            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                   <div className="flex items-center gap-2">
@@ -383,7 +394,7 @@ export default function MessagesPage() {
                     <input type="text" value={inputVal} onChange={(e) => setInputVal(e.target.value)}
                       placeholder="Ecrivez votre message..." disabled={sending}
                       className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm text-[#212121] placeholder-[#9E9E9E] focus:outline-none focus:ring-2 focus:border-[#5E35B1] bg-[#FAFAFA]" />
-                    <button type="submit" disabled={(!inputVal.trim() && !imagePreview) || sending}
+                    <button type="submit" disabled={(!inputVal.trim() && imagePreviews.length === 0) || sending}
                       className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition-all disabled:opacity-50 hover:opacity-90"
                       style={{ background: "#5E35B1" }} aria-label="Envoyer">
                       <Send className="w-4 h-4" />

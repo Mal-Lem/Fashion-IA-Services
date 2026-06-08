@@ -68,7 +68,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   @SubscribeMessage('send_message')
   async handleMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { orderId: string; content: string; attachmentUrl?: string },
+    @MessageBody() data: { orderId: string; content: string; attachmentUrls?: string[] },
   ) {
     const userId = this.connectedUsers.get(client.id);
     if (!userId) return;
@@ -78,7 +78,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
         data.orderId,
         userId,
         data.content,
-        data.attachmentUrl,
+        data.attachmentUrls,
       );
 
       // Diffuser le message à tous les membres de la conversation
