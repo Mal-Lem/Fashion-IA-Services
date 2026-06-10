@@ -11,9 +11,7 @@ export class MessagesService {
     private eventsService: EventsService,
   ) {}
 
-  // Lister les conversations d'un utilisateur
   async getConversations(userId: string) {
-    // Trouver toutes les commandes où l'utilisateur est client ou couturière
     const orders = await this.prisma.order.findMany({
       where: {
         OR: [
@@ -22,18 +20,30 @@ export class MessagesService {
         ],
       },
       include: {
-        design: { select: { name: true, selectedImageUrl: true, thumbnailUrl: true } },
-        client: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        design: { select: { name: true, selectedImageUrl: true } },
+        client: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, lastSeenAt: true } },
         couturiere: {
-          include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
+          include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, lastSeenAt: true } } },
         },
         messages: {
           orderBy: { createdAt: 'desc' },
           take: 1,
         },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { lastMessageAt: { sort: 'desc', nulls: 'last' } },
     });
+
+    const orderIds = orders.map(o => o.id);
+    const unreadCounts = orderIds.length > 0 ? await this.prisma.message.groupBy({
+      by: ['orderId'],
+      where: {
+        orderId: { in: orderIds },
+        senderId: { not: userId },
+        readAt: null,
+      },
+      _count: { id: true },
+    }) : [];
+    const unreadMap = new Map(unreadCounts.map(r => [r.orderId, r._count.id]));
 
     return orders.map(order => {
       const lastMessage = order.messages[0];
@@ -45,30 +55,29 @@ export class MessagesService {
         status: order.status,
         design: order.design,
         partner,
+        unreadCount: unreadMap.get(order.id) || 0,
         lastMessage: lastMessage ? {
           content: lastMessage.content,
           createdAt: lastMessage.createdAt,
           isSystem: lastMessage.isSystem,
+          attachmentUrls: lastMessage.attachmentUrls,
         } : null,
       };
     });
   }
 
-  // Charger les messages d'une conversation
   async getMessages(orderId: string, userId: string, limit = 50) {
-    // Vérifier l'accès
     await this.checkAccess(orderId, userId);
 
     const messages = await this.prisma.message.findMany({
       where: { orderId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
         sender: { select: { id: true, firstName: true, avatarUrl: true } },
       },
     });
 
-    // Marquer les messages comme lus
     await this.prisma.message.updateMany({
       where: {
         orderId,
@@ -78,7 +87,7 @@ export class MessagesService {
       data: { readAt: new Date() },
     });
 
-    return messages;
+    return messages.reverse();
   }
 
   // Envoyer un message
@@ -98,7 +107,11 @@ export class MessagesService {
       },
     });
 
-    // Émettre l'événement data
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { lastMessageAt: new Date() },
+    });
+
     await this.eventsService.emit('message_sent', senderId, {
       order_id: orderId,
       message_id: message.id,

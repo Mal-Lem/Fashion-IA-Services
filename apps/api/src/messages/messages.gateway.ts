@@ -7,6 +7,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { MessagesService } from './messages.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -21,7 +22,12 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private messagesService: MessagesService,
     private jwtService: JwtService,
+    private prisma: PrismaService,
   ) {}
+
+  isUserOnline(userId: string): boolean {
+    return Array.from(this.connectedUsers.values()).includes(userId);
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -42,8 +48,15 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
+    const userId = this.connectedUsers.get(client.id);
     this.connectedUsers.delete(client.id);
+    if (userId) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastSeenAt: new Date() },
+      }).catch(() => {});
+    }
     this.logger.log(`Client deconnecte : ${client.id}`);
   }
 

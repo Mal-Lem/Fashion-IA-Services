@@ -21,7 +21,14 @@ export class MessagesController {
   @ApiOperation({ summary: 'Mes conversations' })
   @Get()
   async getConversations(@Req() req: Request) {
-    return this.messagesService.getConversations(req.user['id']);
+    const conversations = await this.messagesService.getConversations(req.user['id']);
+    return conversations.map(c => ({
+      ...c,
+      partner: {
+        ...c.partner,
+        isOnline: this.messagesGateway.isUserOnline(c.partner?.id),
+      },
+    }));
   }
 
   @ApiOperation({ summary: "Messages d'une conversation" })

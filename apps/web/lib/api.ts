@@ -1,6 +1,7 @@
 "use client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+export const WS_URL = API_BASE.replace("/v1", "");
 
 let accessToken: string | null = null;
 let onAuthError: (() => void) | null = null;
@@ -152,7 +153,8 @@ export const ordersApi = {
 export const messagesApi = {
   getConversations: () => request<any[]>("/messages"),
   getMessages: (orderId: string, limit = 50) => request<any[]>(`/messages/${orderId}?limit=${limit}`),
-  sendMessage: (orderId: string, content: string) => request<any>(`/messages/${orderId}`, { method: "POST", body: JSON.stringify({ content }) }),
+  sendMessage: (orderId: string, content: string, attachmentUrls?: string[]) =>
+    request<any>(`/messages/${orderId}`, { method: "POST", body: JSON.stringify({ content, attachmentUrls }) }),
 };
 
 // ── Users ─────────────────────────────────────
